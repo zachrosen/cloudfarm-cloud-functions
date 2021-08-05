@@ -1,8 +1,10 @@
 import calendar
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timezone
+import time
 
 import firebase_admin
 import requests
+import copy
 from firebase_admin import auth, credentials, firestore
 
 cred = credentials.Certificate("cloudfarm-f94f3-firebase-adminsdk-zmpu5-b3a0bedb3a.json")
@@ -12,32 +14,79 @@ default_app = firebase_admin.initialize_app(cred, {
 db = firestore.client()
 uid = 'EtbRYkdlyqh201M4ZxDUKXCcXSX2'
 user = auth.get_user(uid)
-globalData = db.collection('global').document('settings').get().to_dict()
+globalRef = db.collection('global').document('settings')
+globalData = globalRef.get().to_dict()
 coin = globalData['coin']
 masterWalletAddress = globalData['address']
+userRef = db.collection('users').document(user.uid)
+userData = userRef.get().to_dict()
 
+def updateFirebase(request):
+    # this function pulls data from Flexpool APIs, updates next payment date, then stores everything in Firebase
+    updateMasterUnpaidBalance()
+    updateNextPaymentDate()
+    for rig in userData['rigs']:
+        updateWorkerShares(rig)
+    return 'success'
 
-# # currently cloud functions are running unauthenticated--need to change prior to production
-# masterWalletAddress = '0x589e8eF749C6A9520Cbb7Ad93513A66829A3446F'
-# workerName = 'RX_6800'
-# currentHashArray = []
-# timestampArray = []
+def updateWorkerShares(rigID):
+    workerShareLogs = getWorkerShareLogs(coin, masterWalletAddress, rigID)
+    count = 0
+    initialCount = copy.copy(count)
+    
+    try: 
+        if userData['rigs'][rigID]['logs']:
+            count = userData['unpaidShares']
+            initialCount = copy.copy(count)
+            pastWorkerLogs = userData['rigs'][rigID]['logs']
+            newLogs = copy.copy(workerShareLogs)
+            overlapLogs = []
+            count = userData['unpaidShares']
+            for pastLog in pastWorkerLogs:
+                for currentLog in workerShareLogs:
+                    if pastLog['timestamp'] == currentLog['timestamp']:
+                        overlapLogs.append(currentLog)
+            for overlapLog in overlapLogs:
+                for currentLog in newLogs:
+                    if currentLog['timestamp'] == overlapLog['timestamp']:
+                        newLogs.remove(overlapLog)
 
-def getFlexpoolCoin(masterWalletAddress):
-    response = requests.get("https://api.flexpool.io/v2/miner/locateAddress?address=" + masterWalletAddress)
-    data = response.json()
-    flexPoolCoin = data['result']
-    return flexPoolCoin
+            for log in newLogs:
+                count += log['validShares']
+            
+           
+    except:
+        for log in workerShareLogs:
+            count += log['validShares']
+
+    userData.update({
+        'rigs': {
+            rigID: {
+                'logs': workerShareLogs
+            }
+        },
+        'unpaidShares': count,
+    },
+    )
+    
+    userRef.set(userData, merge=True)
+    addedShares = count - initialCount
+    masterUnpaidShares = globalData['masterUnpaidShares']
+    masterUnpaidShares += addedShares
+
+    globalRef.update({ 'masterUnpaidShares': masterUnpaidShares})
+    return
 
 # worker change not registering, URL is wrong
-def getWorkerInfo(workerName, masterWalletAddress, coin):
-    response = requests.get('https://api.flexpool.io/v2/miner/workers?coin=' + coin + '&address=' + masterWalletAddress)
-    data = response.json()
-    workerList = []
-    for worker in data['result']:
-        if worker['name'] == workerName:
-            workerList.append([workerName, worker['isOnline'], worker['currentEffectiveHashrate'], worker['averageEffectiveHashrate']])
-    return workerList
+# def getWorkerInfo(workerName, masterWalletAddress, coin):
+#     response = requests.get('https://api.flexpool.io/v2/miner/workers?coin=' + coin + '&address=' + masterWalletAddress)
+#     data = response.json()
+#     workerList = []
+#     print(data)
+#     for worker in data['result']:
+#         if worker['name'] == workerName:
+#             workerList.append([workerName, worker['isOnline'], worker['currentEffectiveHashrate'], worker['averageEffectiveHashrate']])
+#     return workerList
 
 # def convertTime(unixTime):
 #     time = (datetime.fromtimestamp(unixTime) - timedelta(hours=2)).strftime('%H:%M')
@@ -58,23 +107,23 @@ def getWorkerInfo(workerName, masterWalletAddress, coin):
 #     currentHashArray.reverse()
 #     return [timestampArray, currentHashArray]
 
-def getDailyRewardsperGhs(coin):
-    response = requests.get('https://api.flexpool.io/v2/pool/dailyRewardPerGigahashSec?coin=' + coin)
-    data = response.json()
-    dailyRewardsperGhs = data['result']
-    return dailyRewardsperGhs
+# def getDailyRewardsperGhs(coin):
+#     response = requests.get('https://api.flexpool.io/v2/pool/dailyRewardPerGigahashSec?coin=' + coin)
+#     data = response.json()
+#     dailyRewardsperGhs = data['result']
+#     return dailyRewardsperGhs
 
-def getCoinPrice(coin):
-    response = requests.get('https://min-api.cryptocompare.com/data/price?fsym=' + coin + '&tsyms=USD')
-    data = response.json()
-    coinPrice = data['USD']
-    return coinPrice
+# def getCoinPrice(coin):
+#     response = requests.get('https://min-api.cryptocompare.com/data/price?fsym=' + coin + '&tsyms=USD')
+#     data = response.json()
+#     coinPrice = data['USD']
+#     return coinPrice
 
 def updateMasterUnpaidBalance():
     response = requests.get('https://api.flexpool.io/v2/miner/balance?coin=' + coin + '&address=' + masterWalletAddress)
     data = response.json()
-    masterUnpaidBalance = round(data['result']['balance'] / 1000000000000000000, 5)
-    db.collection('global').document('settings').update({'master_unpaid_balance': masterUnpaidBalance})
+    masterUnpaidBalance = round(data['result']['balance'] / 1000000000000000000, 6)
+    globalRef.update({'master_unpaid_balance': masterUnpaidBalance})
     return 
     
 def getWorkerShareLogs(coin, masterWalletAddress, workerName):
@@ -85,34 +134,18 @@ def getWorkerShareLogs(coin, masterWalletAddress, workerName):
     workerShareLogs = data['result']
     return workerShareLogs
 
-def updateWorkerShares(workerID):
-    pastWorkerLogs = db.collection('users').document(user.uid).collection('Rigs').document(workerID).get()
-    pastWorkerLogs = pastWorkerLogs.to_dict()['logs']
-    workerShareLogs = getWorkerShareLogs(coin, masterWalletAddress, workerID)
-    overlapLogs = []
-    newLogs = workerShareLogs
-    count = db.collection('users').document(user.uid).get().to_dict()['unpaidShares']    
-    for pastLog in pastWorkerLogs:
-        for currentLog in workerShareLogs:
-            if pastLog['timestamp'] == currentLog['timestamp']:
-                overlapLogs.append(currentLog)
-    for overlapLog in overlapLogs:
-        for currentLog in newLogs:
-            if currentLog['timestamp'] == overlapLog['timestamp']:
-                newLogs.remove(overlapLog)
-    for log in newLogs:
-        count += log['validShares']
-    db.collection('users').document(user.uid).collection('Rigs').document(workerID).update({'logs': workerShareLogs})
-    db.collection('users').document(user.uid).update({'unpaidShares': count})
-    return
 
-def getNextPaymentDate():
+def updateNextPaymentDate():
     todays_date = date.today()
-    year, month = todays_date.year, todays_date.month
-    lastDay = calendar.monthrange(year, month)[1]
-    month = calendar.month_name[month]
-    lastDayofMonth = month + ' ' + str(lastDay)
-    db.collection('global').document('settings').update({'nextPaymentDate': lastDayofMonth})
+    # print(todays_date)
+    # year, month = todays_date.year, todays_date.month
+    # lastDay = calendar.monthrange(year, month)[1]
+    # month = calendar.month_name[month]
+    # lastDayofMonth = month + ' ' + str(lastDay)
+    # print(lastDayofMonth)
+    lastDayofMonth = todays_date.replace(day = calendar.monthrange(todays_date.year, todays_date.month)[1])
+    unixTime = time.mktime(lastDayofMonth.timetuple())
+    globalRef.update({'nextPaymentDate': unixTime})
     return
 
 # def estDailyProfitability(coin, avgHash):
@@ -149,15 +182,7 @@ def getNextPaymentDate():
 #     dailyRewardsperGhs = getDailyRewardsperGhs(coin)
 #     return 'success'
 
-def hourlyFlexpoolData(request):
-    # dailyRewardsperGhs = getDailyRewardsperGhs(coin)
-    updateMasterUnpaidBalance()
-    # need to update workers to dynamically pull from Firestore
-    workerList = db.collection('users').document(user.uid).collection('Rigs').stream()
-    for worker in workerList:
-        updateWorkerShares(worker.id)
-    getNextPaymentDate()
-    return 'success'
+
 
 
 
