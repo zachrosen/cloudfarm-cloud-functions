@@ -58,20 +58,27 @@ def updateWorkerShares(rigID, userData, userRef):
         count = userData['unpaidShares']
         initialCount = copy.copy(count)
         
-        pastWorkerLogs = userData['rigs'][rigID]['logs']
+        if 'logs' in userData['rigs'][rigID]:
+            print('logs exist')
+            pastWorkerLogs = userData['rigs'][rigID]['logs']
+        else:
+            print('no logs found')
+            pastWorkerLogs = []
+        print('this worker is: '+ rigID)
         newLogs = copy.copy(workerShareLogs)
-        overlapLogs = []    
-        for pastLog in pastWorkerLogs:
-            for currentLog in workerShareLogs:
-                if pastLog['timestamp'] == currentLog['timestamp']:
-                    overlapLogs.append(currentLog)
-        for overlapLog in overlapLogs:
-            for currentLog in newLogs:
-                if currentLog['timestamp'] == overlapLog['timestamp']:
-                    newLogs.remove(overlapLog)
-    
-        for log in newLogs:
-            count += log['validShares']
+        overlapLogs = []   
+        if workerShareLogs: 
+            for pastLog in pastWorkerLogs:
+                for currentLog in workerShareLogs:
+                    if pastLog['timestamp'] == currentLog['timestamp']:
+                        overlapLogs.append(currentLog)
+            for overlapLog in overlapLogs:
+                for currentLog in newLogs:
+                    if currentLog['timestamp'] == overlapLog['timestamp']:
+                        newLogs.remove(overlapLog)
+            if newLogs:    
+                for log in newLogs:
+                    count += log['validShares']
         
         userRef.set({
         'rigs': {
