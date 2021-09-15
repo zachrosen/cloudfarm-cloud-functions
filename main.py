@@ -63,10 +63,12 @@ def updateNextPaymentDate():
     return
 
 # def updateWorkerShares(rigID, userData, userRef):
+addedShareTracker = {'eth': 0, 'rvn': 0}
 def updateWorkerShares(rigID, userData, userRef):
     newShares = {}
     initialShares = {}
     updatedLogs = {}
+    
     # rigID = 'rig999'
     # workerNameRVN = 'gn6'
     # rvnWallet = 'RDthzQkTYcPWzAMdaUeNnwBnmVy3pMV321'
@@ -83,14 +85,15 @@ def updateWorkerShares(rigID, userData, userRef):
         {'logs': getNanopoolLogs(rvnWallet, shortWorkerName)},
     }
     
+
     
     for coin in coinDict:
-        coinData = userData['rigs'][rigID][coin]
+        rigData = userData['rigs'][rigID]
+        if coin not in rigData:
+            rigData[coin] = { 'logs': {}, 'unpaidShares': 0}
+        coinData = rigData[coin]
         workerShareLogs = coinDict[coin]['logs']
-
-        if 'unpaidShares' in coinData:
-            count = coinData['unpaidShares']
-        else: count = 0
+        count = coinData['unpaidShares']
         initialCount = copy.copy(count)
         initialShares[coin] = initialCount
 
@@ -118,20 +121,27 @@ def updateWorkerShares(rigID, userData, userRef):
         newShares[coin] = count
         updatedLogs[coin] = workerShareLogs
 
-        masterUnpaidShares = globalCoinData[coin]['unpaidShares']
-        addedShares = newShares[coin] - initialShares[coin]
-        masterUnpaidShares += addedShares
-        globalCoinRef.set({ 
-            coin:
+        # masterUnpaidShares = globalCoinData[coin]['unpaidShares']
+        
+        addedShareTracker[coin] += (newShares[coin] - initialShares[coin])
+        print('added share tracker: ', addedShareTracker)
+        print('rig ', rigID, 'mined', newShares[coin] - initialShares[coin], 'additional shares of ', coin)
+
+
+    globalCoinRef.set({ 
+            'eth':
                 {
-                    'unpaidShares': masterUnpaidShares,
+                    'unpaidShares': addedShareTracker['eth'],
+                    'lastUpdated': time.time(),
+                },
+            'rvn':
+                {
+                    'unpaidShares': addedShareTracker['rvn'],
                     'lastUpdated': time.time(),
                 },
                 
                 }, merge=True)
-
-        print('rig ', rigID, 'mined', count-initialCount, 'additional shares of ', coin)
-
+    print('added ', addedShareTracker['eth'], ' shares of ETH and ', addedShareTracker['rvn'], ' shares of RVN to master')
     userRef.set({
         'rigs': {
             rigID: {
