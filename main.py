@@ -64,8 +64,9 @@ def updateNextPaymentDate():
 
 # def updateWorkerShares(rigID, userData, userRef):
 addedShareTracker = {'eth': 0, 'rvn': 0}
+totalUnpaidShares = {'eth': 0, 'rvn': 0}
 def updateWorkerShares(rigID, userData, userRef):
-    newShares = {}
+    totalShares = {}
     initialShares = {}
     updatedLogs = {}
     
@@ -118,25 +119,26 @@ def updateWorkerShares(rigID, userData, userRef):
             if newLogs:
                 for log in newLogs:
                     count += log['validShares']
-        newShares[coin] = count
+        totalShares[coin] = count
         updatedLogs[coin] = workerShareLogs
 
         # masterUnpaidShares = globalCoinData[coin]['unpaidShares']
         
-        addedShareTracker[coin] += (newShares[coin] - initialShares[coin])
-        print('added share tracker: ', addedShareTracker)
-        print('rig ', rigID, 'mined', newShares[coin] - initialShares[coin], 'additional shares of ', coin)
-
-
+        addedShareTracker[coin] += (totalShares[coin] - initialShares[coin])
+        # print('added share tracker: ', addedShareTracker)
+        print('rig ', rigID, 'mined', addedShareTracker[coin], 'additional shares of ', coin)
+    for coin in coinDict:
+        totalUnpaidShares[coin] = addedShareTracker[coin] + initialShares[coin]
+    print('total unpaid', totalUnpaidShares[coin])
     globalCoinRef.set({ 
             'eth':
                 {
-                    'unpaidShares': addedShareTracker['eth'],
+                    'unpaidShares': totalUnpaidShares['eth'],
                     'lastUpdated': time.time(),
                 },
             'rvn':
                 {
-                    'unpaidShares': addedShareTracker['rvn'],
+                    'unpaidShares': totalUnpaidShares['rvn'],
                     'lastUpdated': time.time(),
                 },
                 
@@ -147,12 +149,12 @@ def updateWorkerShares(rigID, userData, userRef):
             rigID: {
                 'eth': {
                     'logs': updatedLogs['eth'],
-                    'unpaidShares': newShares['eth'],
+                    'unpaidShares': totalShares['eth'],
                    
                 },
                 'rvn': {
                     'logs': updatedLogs['rvn'],
-                    'unpaidShares': newShares['rvn'],
+                    'unpaidShares': totalShares['rvn'],
                 }
             }
         },
